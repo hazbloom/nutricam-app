@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NutriCam AI</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#10b981">
+</head>
+<body>
+
+    <div class="app-container">
+        <header>
+            <h1>NutriCam AI</h1>
+        </header>
+
+        <div class="camera-wrapper">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas" style="display:none;"></canvas>
+            <img id="photo-preview" style="display:none;" alt="Food preview">
+        </div>
+
+        <div class="controls">
+            <input type="text" id="extra-details" placeholder="Optional: e.g., '200g' or 'cooked in butter'">
+            
+            <div class="button-group">
+                <button id="capture-btn">📸 Snap</button>
+                <button id="analyze-btn" style="display:none;">🔍 Analyze</button>
+                <button id="retake-btn" style="display:none;">🔄 Retake</button>
+            </div>
+        </div>
+
+        <div id="results" class="results-card" style="display:none;">
+            <h3>Nutritional Estimate</h3>
+            <div id="loading" class="hidden">Thinking... 🧠</div>
+            <div id="macro-content"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
+
+        // *** CONFIGURATION ***
+        // WARNING: In a real production app, use a backend proxy to hide this key.
+        const API_KEY = "AIzaSyDzgYnLAh7wTQeyNTFMrAd01COuRl-kSdc"; 
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const photoPreview = document.getElementById('photo-preview');
+        const captureBtn = document.getElementById('capture-btn');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const retakeBtn = document.getElementById('retake-btn');
+        const resultsDiv = document.getElementById('results');
+        const macroContent = document.getElementById('macro-content');
+        const extraDetails = document.getElementById('extra-details');
+        const loading = document.getElementById('loading');
+
+        let stream;
+
+        // 1. Start Camera
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } // Use back camera
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                alert("Camera access denied or not available. Please allow permissions.");
+            }
+        }
+
+        // 2. Take Picture
+        captureBtn.addEventListener('click', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            photoPreview.src = dataUrl;
+            
+            video.style.display = 'none';
+            photoPreview.style.display = 'block';
+            captureBtn.style.display = 'none';
+            analyzeBtn.style.display = 'inline-block';
+            retakeBtn.style.display = 'inline-block';
+        });
+
+        // 3. Retake
+        retakeBtn.addEventListener('click', () => {
+            photoPreview.style.display = 'none';
+            video.style.display = 'block';
+            captureBtn.style.display = 'inline-block';
+            analyzeBtn.style.display = 'none';
+            retakeBtn.style.display = 'none';
+            resultsDiv.style.display = 'none';
+        });
+
+        // 4. Analyze with AI
+        analyzeBtn.addEventListener('click', async () => {
+            resultsDiv.style.display = 'block';
+            loading.style.display = 'block';
+            macroContent.innerHTML = '';
+            
+            try {
+                const genAI = new GoogleGenerativeAI(API_KEY);
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+                // Prepare image for API
+                const base64Image = photoPreview.src.split(',')[1];
+                
+                const userNotes = extraDetails.value ? `User notes: ${extraDetails.value}.` : "";
+                
+                const prompt = `
+                    Identify the food in this image. Estimate the portion size visually or use the user notes if provided.
+                    ${userNotes}
+                    Provide a nutritional breakdown.
+                    Rules:
+                    1. Use Metric units only (grams, mg).
+                    2. Return the data as a clean HTML table with no markdown formatting around it (just <table>...</table>).
+                    3. Include: Calories, Protein, Carbs, Fat, Fiber, Sugar, and key Vitamins/Minerals.
+                    4. Add a brief 1-sentence summary of the food at the top.
+                `;
+
+                const imagePart = {
+                    inlineData: {
+                        data: base64Image,
+                        mimeType: "image/jpeg",
+                    },
+                };
+
+                const result = await model.generateContent([prompt, imagePart]);
+                const response = await result.response;
+                const text = response.text();
+
+                macroContent.innerHTML = text;
+            } catch (error) {
+                macroContent.innerHTML = `<p style="color:red">Error: ${error.message}</p>`;
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+
+        // Initialize
+        startCamera();
+
+        // Register Service Worker for PWA
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>
